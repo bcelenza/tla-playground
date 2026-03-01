@@ -1,0 +1,13 @@
+# TLC output
+*.out
+states/
+
+# TLC trace files
+*_trace_*.tlc
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
