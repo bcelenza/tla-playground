@@ -7,13 +7,6 @@ A learning repository for TLA+ formal specifications.
 1. Install the [TLA+ VS Code extension](https://marketplace.visualstudio.com/items?itemName=alygin.vscode-tlaplus)
 2. Install Java (JDK 11+) — required by the TLC model checker
 
-## Files
-
-| File | Description |
-|------|-------------|
-| `Counter.tla` | A simple counter spec — start here! |
-| `Counter.cfg` | TLC model config for Counter |
-
 ## Running
 
 - Open a `.tla` file in VS Code
@@ -22,7 +15,7 @@ A learning repository for TLA+ formal specifications.
 
 ## Learning Path
 
-1. Read through `Counter.tla` and understand each section
+1. Read through TLA file and understand each section
 2. Run TLC and observe the output
 3. Try the exercises in the comments
 4. Create your own specs!
