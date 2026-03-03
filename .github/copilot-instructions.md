@@ -12,6 +12,7 @@ This is a TLA+ learning repository. The user (Brian) is learning TLA+ from scrat
 1. **Counter.tla** — First spec. Learned: variables, Init, Next, Spec, invariants (TypeOK), liveness, fairness, stuttering, deadlock detection
 2. **TwoPhaseCommit.tla** — Distributed transaction protocol. Learned: functions/maps (`[RM -> {...}]`), EXCEPT syntax, existential quantifiers (`\E`), universal quantifiers (`\A`), set operations, the Consistency safety property
 3. **ThreePhaseCommit.tla** — Extended 2PC with pre-commit phase. Learned: how 3PC reduces blocking vs 2PC, incremental spec design using matching naming conventions
+4. **ThreePhaseCommitMajority.tla** — Custom majority-quorum 3PC variant. Learned: `Cardinality(S)` and `EXTENDS Naturals` for arithmetic, `\notin` (set non-membership), `#` (not-equal), `IsMajority` quorum operator, `RepairRM` for eventual consistency, `<>P` (temporal "eventually"), `FairSpec` with `WF_vars(Next)`, state space explosion with RM count, strict vs eventual consistency tradeoffs
 
 ## Key concepts Brian understands
 
@@ -23,6 +24,10 @@ This is a TLA+ learning repository. The user (Brian) is learning TLA+ from scrat
 - Why TLA+ uses math notation instead of programming syntax
 - Real-world usage (AWS paper on DynamoDB/S3 bugs)
 - Intentionally introduced a bug in 2PC to see a TLC counterexample trace
+- Majority quorum vs unanimity in commit protocols
+- State space as the set of all reachable states TLC explores
+- Why `EXTENDS Naturals` is needed for arithmetic operators like `>`
+- Weak fairness: continuously enabled actions must eventually fire
 
 ## Suggested next steps
 
