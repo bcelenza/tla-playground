@@ -21,7 +21,7 @@ CONSTANT RM  \* The set of resource managers, e.g. {"rm1", "rm2", "rm3"}
 
 \* --- Variables ---
 VARIABLES
-    rmState,        \* Function: rmState[r] \in {"working", "prepared", "precommitted", "committed", "aborted"}
+    rmState,        \* Function: rmState[r] \in {"working", "prepared", "precommitted", "committed", "aborted", "failed"}
     tmState,        \* Transaction manager state: "init", "precommitted", "committed", "aborted"
     tmPrepared,     \* Set of RMs the TM has received "prepared" votes from
     tmPrecommitted  \* Set of RMs the TM has received "precommit ack" from
@@ -41,7 +41,7 @@ IsMajority(S) == Cardinality(S) * 2 > Cardinality(RM)
 \* ===================================================================
 
 TypeOK ==
-    /\ rmState \in [RM -> {"working", "prepared", "precommitted", "committed", "aborted"}]
+    /\ rmState \in [RM -> {"working", "prepared", "precommitted", "committed", "aborted", "failed"}]
     /\ tmState \in {"init", "precommitted", "committed", "aborted"}
     /\ tmPrepared \subseteq RM
     /\ tmPrecommitted \subseteq RM
@@ -55,6 +55,17 @@ Init ==
     /\ tmState         = "init"
     /\ tmPrepared      = {}
     /\ tmPrecommitted  = {}
+
+\* ===================================================================
+\* RM Failure (NEW)
+\* ===================================================================
+
+\* An RM can fail (crash) at any time, unless already in a terminal state.
+\* Failed RMs stop participating in the protocol entirely.
+RMFail(r) ==
+    /\ rmState[r] \notin {"committed", "aborted", "failed"}
+    /\ rmState' = [rmState EXCEPT ![r] = "failed"]
+    /\ UNCHANGED <<tmState, tmPrepared, tmPrecommitted>>
 
 \* ===================================================================
 \* Phase 1: Prepare (identical to ThreePhaseCommit)
@@ -119,12 +130,24 @@ TMCommit ==
     /\ tmState' = "committed"
     /\ UNCHANGED <<rmState, tmPrepared, tmPrecommitted>>
 
-\* ===================================================================
-\* Abort (same as ThreePhaseCommit)
-\* ===================================================================
-
+\* TM can abort during init phase (same as ThreePhaseCommit)
 TMAbort ==
     /\ tmState = "init"
+    /\ tmState' = "aborted"
+    /\ UNCHANGED <<rmState, tmPrepared, tmPrecommitted>>
+
+\* TM aborts from precommitted if quorum is impossible.
+\* This matches spokesd's errQuorumImpossible handling in quorum.go.
+\*
+\* "Potential" = RMs that could still send a precommit ack:
+\*   - "prepared" RMs can receive precommit msg and ack
+\*   - "precommitted" RMs can ack (if not already counted)
+\*
+\* If (already acked) ∪ (potential) < majority, commit is impossible → abort.
+TMTimeoutAbort ==
+    /\ tmState = "precommitted"
+    /\ LET potential == {r \in RM : rmState[r] \in {"prepared", "precommitted"}}
+       IN ~IsMajority(tmPrecommitted \union potential)
     /\ tmState' = "aborted"
     /\ UNCHANGED <<rmState, tmPrepared, tmPrecommitted>>
 
@@ -141,19 +164,26 @@ RMRcvCommitMsg(r) ==
     /\ rmState' = [rmState EXCEPT ![r] = "committed"]
     /\ UNCHANGED <<tmState, tmPrepared, tmPrecommitted>>
 
-\* An RM learns the TM aborted and aborts
+\* An RM learns the TM aborted and aborts.
+\* Handles abort from precommitted state too (after TMTimeoutAbort).
+\* Only transitions RMs that aren't already in a terminal state.
 RMRcvAbortMsg(r) ==
     /\ tmState = "aborted"
+    /\ rmState[r] \notin {"committed", "aborted"}
     /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
     /\ UNCHANGED <<tmState, tmPrepared, tmPrecommitted>>
 
 \* ===================================================================
-\* Repair process (NEW — brings minority RMs to committed)
+\* Repair process (brings all RMs to the committed outcome)
 \* ===================================================================
 
 \* After the TM commits, a background process eventually repairs any
-\* RM that isn't committed yet.  This models the "second process" that
-\* brings minority RMs back to consistency.
+\* RM that isn't committed yet — including failed RMs AND RMs that
+\* locally aborted before knowing the global outcome.
+\*
+\* This models recovery: an RM comes back online (or learns the truth)
+\* and syncs with the committed outcome.  In real systems, this is the
+\* "anti-entropy" or "read-repair" process.
 RepairRM(r) ==
     /\ tmState = "committed"
     /\ rmState[r] # "committed"
@@ -168,7 +198,9 @@ Next ==
     \/ TMPreCommit
     \/ TMCommit
     \/ TMAbort
+    \/ TMTimeoutAbort
     \/ \E r \in RM :
+        \/ RMFail(r)
         \/ RMPrepare(r)
         \/ RMChooseToAbort(r)
         \/ TMReceivePrepare(r)
@@ -215,29 +247,41 @@ EventualConsistency ==
 \*
 \* Differences from ThreePhaseCommit.tla:
 \*
-\*   New operator:       IsMajority(S)    — true when |S| > |RM|/2
-\*   New action:         RepairRM(r)      — brings minority RMs to committed
-\*   New property:       EventualConsistency — all RMs eventually converge
-\*   New definition:     FairSpec         — Spec with weak fairness for liveness
+\*   New operators:
+\*     IsMajority(S)       — true when |S| > |RM|/2
+\*
+\*   New actions:
+\*     RMFail(r)           — RM crashes (stops participating)
+\*     RepairRM(r)         — brings failed/minority RMs to committed
+\*     TMTimeoutAbort      — TM aborts from precommit if quorum impossible
+\*                           (matches spokesd errQuorumImpossible behavior)
+\*
+\*   New properties:
+\*     EventualConsistency — all RMs eventually converge (liveness)
+\*     FairSpec            — Spec with weak fairness for liveness checking
 \*
 \*   Changed actions:
-\*     TMPreCommit      — IsMajority(tmPrepared) instead of tmPrepared = RM
-\*     TMCommit         — IsMajority(tmPrecommitted) instead of tmPrecommitted = RM
-\*     RMRcvCommitMsg   — only fires for precommitted RMs (voters)
-\*     TMReceivePrepare — added r \notin tmPrepared guard
-\*     TMReceivePreCommit — added r \notin tmPrecommitted guard
+\*     TMPreCommit         — IsMajority(tmPrepared) instead of tmPrepared = RM
+\*     TMCommit            — IsMajority(tmPrecommitted) instead of tmPrecommitted = RM
+\*     RMRcvCommitMsg      — only fires for precommitted RMs (voters)
+\*     RMRcvAbortMsg       — guards against already-terminal RMs
+\*     TMReceivePrepare    — added r \notin tmPrepared guard
+\*     TMReceivePreCommit  — added r \notin tmPrecommitted guard
 \*
 \*   Broken invariant:
-\*     Consistency      — intentionally violated; minority RMs may be aborted
-\*                        while majority has committed (until repair runs)
+\*     Consistency         — intentionally violated; minority RMs may be aborted
+\*                           while majority has committed (until repair runs)
 \*
 \*   New syntax summary:
-\*   ┌─────────────────────────┬───────────────────────────────────────────┐
-\*   │ Cardinality(S)          │ Number of elements in finite set S       │
-\*   │ Cardinality(S) * 2 > N  │ Arithmetic comparison (majority test)    │
-\*   │ r \notin S              │ r is not an element of set S             │
-\*   │ x # y                   │ x is not equal to y                      │
-\*   │ <>P                     │ "Eventually P" — liveness temporal op    │
-\*   │ WF_vars(Next)           │ Weak fairness — enabled ⟹ must happen   │
-\*   └─────────────────────────┴───────────────────────────────────────────┘
+\*   ┌─────────────────────────────┬───────────────────────────────────────────┐
+\*   │ Cardinality(S)              │ Number of elements in finite set S       │
+\*   │ Cardinality(S) * 2 > N      │ Arithmetic comparison (majority test)    │
+\*   │ r \notin S                  │ r is not an element of set S             │
+\*   │ x \notin {a, b, c}          │ x is not in the literal set {a, b, c}    │
+\*   │ <>P                         │ "Eventually P" — liveness temporal op    │
+\*   │ WF_vars(Next)               │ Weak fairness — enabled ⟹ must happen   │
+\*   │ LET x == expr IN body       │ Local definition within an expression    │
+\*   │ ~IsMajority(S)              │ Negation — "not a majority"              │
+\*   └─────────────────────────────┴───────────────────────────────────────────┘
+\*
 \*
