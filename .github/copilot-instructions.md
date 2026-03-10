@@ -47,3 +47,5 @@ This is a TLA+ learning repository. The user (Brian) is learning TLA+ from scrat
 - Line-by-line plain English explanations when introducing new specs
 - Use consistent naming conventions across specs for easy comparison
 - Show new syntax in a summary table at the end of each spec
+- Never automatically commit or push changes to this repository unless instructed
+- Use the existing make commands for model checking
